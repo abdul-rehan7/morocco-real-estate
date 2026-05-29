@@ -1,7 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import server from "../src/server";
-
 export const config = {
   runtime: "nodejs",
 };
@@ -23,44 +21,67 @@ async function readRequestBody(request: IncomingMessage): Promise<ArrayBuffer | 
   );
 }
 
-export default async function handler(request: IncomingMessage, response: ServerResponse) {
-  const origin = `https://${request.headers.host ?? "localhost"}`;
-  const url = new URL(request.url ?? "/", origin);
-  const body = request.method && request.method !== "GET" && request.method !== "HEAD"
-    ? await readRequestBody(request)
-    : undefined;
+function normalizeHeaders(request: IncomingMessage): Headers {
+  const headers = new Headers();
 
-  const requestInit: RequestInit & { duplex?: "half" } = {
-    method: request.method,
-    headers: request.headers as HeadersInit,
-    body,
-  };
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (value == null) {
+      continue;
+    }
 
-  if (body) {
-    requestInit.duplex = "half";
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        headers.append(key, item);
+      }
+      continue;
+    }
+
+    headers.set(key, value);
   }
 
-  const webRequest = new Request(url, requestInit);
+  return headers;
+}
 
-  const webResponse = await server.fetch(webRequest, undefined, undefined);
+export default async function handler(request: IncomingMessage, response: ServerResponse) {
+  try {
+    const origin = `https://${request.headers.host ?? "localhost"}`;
+    const url = new URL(request.url ?? "/", origin);
+    const body = request.method && request.method !== "GET" && request.method !== "HEAD"
+      ? await readRequestBody(request)
+      : undefined;
 
-  response.statusCode = webResponse.status;
-  response.statusMessage = webResponse.statusText;
+    const requestInit: RequestInit & { duplex?: "half" } = {
+      method: request.method,
+      headers: normalizeHeaders(request),
+      body,
+    };
 
-  webResponse.headers.forEach((value, key) => {
-    if (key.toLowerCase() === "set-cookie") {
-      response.setHeader(key, webResponse.headers.getSetCookie());
+    if (body) {
+      requestInit.duplex = "half";
+    }
+
+    const webRequest = new Request(url, requestInit);
+    const serverModule = await import("../dist/server/server.js");
+    const server = serverModule.default as {
+      fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
+    };
+
+    const webResponse = await server.fetch(webRequest, undefined, undefined);
+    const responseHeaders = Object.fromEntries(webResponse.headers.entries());
+
+    response.writeHead(webResponse.status, responseHeaders);
+
+    if (webResponse.body == null) {
+      response.end();
       return;
     }
 
-    response.setHeader(key, value);
-  });
-
-  if (webResponse.body == null) {
-    response.end();
-    return;
+    const buffer = Buffer.from(await webResponse.arrayBuffer());
+    response.end(buffer);
+  } catch (error) {
+    console.error(error);
+    response.statusCode = 500;
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end("<!doctype html><html><body><h1>Internal Server Error</h1></body></html>");
   }
-
-  const buffer = Buffer.from(await webResponse.arrayBuffer());
-  response.end(buffer);
 }
