@@ -4,7 +4,6 @@
   "outputDirectory": "dist/client",
   "rewrites": [
     {
-      "src": "/(.*)",
       "dest": "/api/server"
     }
   ]
