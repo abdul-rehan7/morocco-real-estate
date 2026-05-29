@@ -2,12 +2,7 @@
   "version": 2,
   "buildCommand": "npm run build",
   "outputDirectory": "dist/client",
-  "functions": {
-    "api/server.ts": {
-      "runtime": "edge"
-    }
-  },
-  "routes": [
+  "rewrites": [
     {
       "src": "/(.*)",
       "dest": "/api/server"
